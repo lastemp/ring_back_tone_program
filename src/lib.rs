@@ -1,8 +1,11 @@
 use anchor_lang::prelude::*;
-
+use std::mem::size_of;
+use anchor_lang::solana_program::log::{
+    sol_log_compute_units
+};
 // This is your program's public key and it will update
 // automatically when you build the project.
-declare_id!("11111111111111111111111111111111");
+declare_id!("HYdHowYzt1HL2moBEFM1cUinYtt1phuVnKEnuwQuydSb");
 
 // Artist name length
 const ARTIST_NAME_LENGTH: usize = 20;
@@ -49,7 +52,7 @@ mod ring_back_tone_program {
             return Err(Errors::ExceededUserUrlMaxLength.into());
         }
         let music_artist = &mut ctx.accounts.music_artist;
-        music_artist.artist_wallet_address = ctx.accounts.signer.key();
+        music_artist.signer = ctx.accounts.signer.key();
         music_artist.artist_name = name;
         music_artist.artist_profile_url = profile_url;
         msg!("New music artist Added!"); //logging
@@ -88,7 +91,7 @@ mod ring_back_tone_program {
         subscription_amount: u64,
         subscription_duration: String,
     ) -> Result<()> {
-        msg!(&description);  //logging
+        msg!(&audio_name);  //logging
         if audio_name.trim().is_empty() || audio_url.trim().is_empty() || subscription_duration.trim().is_empty() {
           return Err(Errors::CannotUploadAudio.into());
         }
@@ -117,7 +120,7 @@ mod ring_back_tone_program {
           }
             else{false}
         };
-        //  withdrawal amount must be greater than zero
+        //  amount must be greater than zero
         if !valid_amount {
             return Err(Errors::AmountNotgreaterThanZero.into());
         }
@@ -130,15 +133,17 @@ mod ring_back_tone_program {
         ring_back_tone.subscription_amount = subscription_amount;
         ring_back_tone.subscription_duration = subscription_duration;
         ring_back_tone.creator_time = ctx.accounts.clock.unix_timestamp;
+        
         // Increase ring_back_tones' count by 1
         mobile_network_operator.ring_back_tones_count += 1;
 
         let music_artist = &mut ctx.accounts.music_artist;
         let mut iter = music_artist.ring_back_tones.iter();
-        if iter.any(|&v| v == ring_back_tone) {
+        if iter.any(|v| v == &ring_back_tone.music_audio_name) {
             return Err(Errors::CannotAddRingbackTone.into());
         }
-        music_artist.ring_back_tones.push(ring_back_tone);
+        let audio_name_1 = &ring_back_tone.music_audio_name;
+        music_artist.ring_back_tones.push(audio_name_1.to_string());
         
         msg!("New ringback tone Added!");  //logging
         sol_log_compute_units(); //Logs how many compute units are left, important for budget
@@ -150,17 +155,16 @@ mod ring_back_tone_program {
           if amount > 0 {
               true
           }
-            else{false}
+          else{false}
         };
         //  amount must be greater than zero
         if !valid_amount {
             return Err(Errors::AmountNotgreaterThanZero.into());
         }
-        //  donation target amount cannot be exceeded
+        //  Music fan should pay for the exact Amount for the ringback tone
         let subscription_amount = &ctx.accounts.ring_back_tone.subscription_amount;
-        let total_amount_donated  = &ctx.accounts.ring_back_tone.amount_donated;
-        if amount == *subscription_amount {
-            return Err(Errors::ExceededTargetAmount.into());
+        if amount != *subscription_amount {
+            return Err(Errors::AmountNotSufficient.into());
         }
         let instruction = anchor_lang::solana_program::system_instruction::transfer(
             &ctx.accounts.user.key(),
@@ -176,16 +180,17 @@ mod ring_back_tone_program {
         );
         let music_artist = &mut ctx.accounts.music_artist;
         let mut iter = music_artist.subscribers.iter();
-        let subscriber = ctx.accounts.signer.key();
+        let subscriber = ctx.accounts.user.key();
         if iter.any(|&v| v == subscriber) {
-            return Err(Errors::UserSubscribedAudio.into());
+            //return Err(Errors::UserSubscribedAudio.into());
         }
-        music_artist.subscribers.push(subscriber);
+        else {
+            music_artist.subscribers.push(subscriber);   
+        }
         music_artist.subscriptions_count += 1;
         music_artist.amount_paid += amount;
         Ok(())
     }
-    
 }
 
 /// RingBackTonePlatform context
@@ -212,14 +217,14 @@ pub struct SignUpMusicArtist<'info> {
         seeds = [b"music-artist".as_ref(), signer.key().as_ref()],
         bump,
         payer = signer,
-        space = size_of::<MusicArtistAccount>() + ARTIST_NAME_LENGTH + ARTIST_URL_LENGTH + 8 + size_of::<RingBackToneAccount>()*NUMBER_OF_ALLOWED_RINGBACKTONES_SPACE + 32*NUMBER_OF_ALLOWED_SUBSCRIBERS_SPACE 
+        space = size_of::<MusicArtistAccount>() + ARTIST_NAME_LENGTH + ARTIST_URL_LENGTH + 8 + 24*NUMBER_OF_ALLOWED_RINGBACKTONES_SPACE + 32*NUMBER_OF_ALLOWED_SUBSCRIBERS_SPACE 
     )]
     pub music_artist: Account<'info, MusicArtistAccount>,
     #[account(mut)]
     pub signer: Signer<'info>,
     pub system_program: Program<'info, System>,
     // Clock to save time
-    pub clock: Sysvar<'info, Clock>,
+    //pub clock: Sysvar<'info, Clock>,
 }
 
 /// SignUpMusicFan context
@@ -238,7 +243,7 @@ pub struct SignUpMusicFan<'info> {
     pub signer: Signer<'info>,
     pub system_program: Program<'info, System>,
     // Clock to save time
-    pub clock: Sysvar<'info, Clock>,
+    //pub clock: Sysvar<'info, Clock>,
 }
 
 /// UploadRingBackTone context
@@ -246,7 +251,7 @@ pub struct SignUpMusicFan<'info> {
 pub struct UploadRingBackTone<'info> {
     #[account(mut, seeds = [b"mobile-network-operator".as_ref()], bump)]
     pub mobile_network_operator: Account<'info, MobileNetworkOperatorAccount>,
-     #[account(mut, seeds = [b"music-artist".as_ref(), signer.key().as_ref()], bump)]
+    #[account(mut, seeds = [b"music-artist".as_ref(), signer.key().as_ref()], bump)]
     pub music_artist: Account<'info, MusicArtistAccount>,
     #[account(
         init,
@@ -254,7 +259,7 @@ pub struct UploadRingBackTone<'info> {
         seeds = [b"ring-back-tone".as_ref(), mobile_network_operator.ring_back_tones_count.to_be_bytes().as_ref()],
         bump,
         payer = signer,
-        space = size_of::<RingBackToneAccount>() + AUDIO_NAME_LENGTH + AUDIO_URL_LENGTH + SUBSCRIPTION_DURATION_LENGTH +8
+        space = size_of::<RingBackToneAccount>() + AUDIO_NAME_LENGTH + AUDIO_URL_LENGTH + SUBSCRIPTION_DURATION_LENGTH + 8
     )]
     pub ring_back_tone: Account<'info, RingBackToneAccount>,
     #[account(mut)]
@@ -266,7 +271,7 @@ pub struct UploadRingBackTone<'info> {
 
 #[derive(Accounts)]
 pub struct SubscribeRingBackTone<'info> {
-    #[account(mut, seeds = [b"music-artist".as_ref(), signer.key().as_ref()], bump)]
+    #[account(mut, seeds = [b"music-artist".as_ref(), user.key().as_ref()], bump)]
     pub music_artist: Account<'info, MusicArtistAccount>,
     pub ring_back_tone: Account<'info, RingBackToneAccount>,
     #[account(mut)]
@@ -286,10 +291,12 @@ pub struct MobileNetworkOperatorAccount {
 // Music Artist Account Structure
 #[account]
 pub struct MusicArtistAccount {
-    pub artist_wallet_address: Pubkey,
+    // Signer address
+    pub signer: Pubkey,
     pub artist_name: String,
     pub artist_profile_url: String,
-    pub ring_back_tones: Vec<RingBackToneAccount>,
+    //pub ring_back_tones: Vec<RingBackToneAccount>,
+    pub ring_back_tones: Vec<String>,
     pub subscribers: Vec<Pubkey>,
     pub subscriptions_count: u8,
     pub amount_paid: u64,
@@ -316,7 +323,21 @@ pub struct MusicFanAccount {
     // user profile url
     pub user_profile_url: String,
     // ringback tone subscribed to by the music fan
-    pub ring_back_tone: RingBackTone,
+    pub ring_back_tone: MusicAudio,//RingBackTone,
+}
+
+//#[derive(AnchorSerialize, AnchorDeserialize, Copy, Clone)]
+//#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+#[derive(AnchorSerialize, AnchorDeserialize, Default, Clone)]
+pub struct MusicAudio {
+    // Signer address
+    pub signer: Pubkey,
+    pub music_audio_name: String,
+    pub music_audio_code: u8,
+    pub music_audio_url: String,
+    pub subscription_amount: u64,
+    pub subscription_duration: String,
+    pub creator_time: i64,
 }
 
 #[error_code]
@@ -348,8 +369,11 @@ pub enum Errors {
     #[msg("Exceeded audio url max length")]
     ExceededAudioUrlMaxLength,
 
-    #[msg("Donation target amount Exceeded.")]
+    #[msg("Invalid Amount.")]
     AmountNotgreaterThanZero,
+
+    #[msg("Insufficient Amount.")]
+    AmountNotSufficient,
 
     #[msg("AudioCode must have a value greater zero.")]
     InvalidAudioCode,
